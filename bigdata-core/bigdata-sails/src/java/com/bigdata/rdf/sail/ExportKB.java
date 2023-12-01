@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.zip.GZIPOutputStream;
+import java.util.ArrayList;
 
 import org.apache.log4j.Logger;
 import org.openrdf.model.Resource;
@@ -259,47 +260,57 @@ public class ExportKB {
      * @throws SailException
      * @throws RDFHandlerException
      */
-    public void exportData() throws IOException, SailException,
-            RDFHandlerException {
+    public void exportData() throws IOException, SailException, RDFHandlerException {
         prepare();
-//        final BigdataSail sail = new BigdataSail(kb);
-//        try {
-//            sail.initialize();
-//            final SailConnection conn = sail.getReadOnlyConnection();
-//            try {
-                final CloseableIteration<? extends Statement, SailException> itr = conn
-                        .getStatements(null/* s */, null/* p */, null/* o */,
-                                includeInferred, new Resource[] {}/* contexts */);
-                try {
-                    final File file = new File(kbdir, "data."
-                            + format.getDefaultFileExtension()+".gz");
-                    System.out.println("Writing " + file);
-                    final OutputStream os = new GZIPOutputStream(
-                            new FileOutputStream(file));
-                    try {
-                        final RDFWriter writer = RDFWriterRegistry
-                                .getInstance().get(format).getWriter(os);
-                        writer.startRDF();
-                        while (itr.hasNext()) {
-                            final Statement stmt = itr.next();
-                            writer.handleStatement(stmt);
-                        }
-                        writer.endRDF();
-                    } finally {
-                        os.close();
-                    }
-                } finally {
-                    itr.close();
+    
+        final CloseableIteration<? extends Statement, SailException> itr = conn
+                .getStatements(null /* s */, null /* p */, null /* o */,
+                        includeInferred, new Resource[] {} /* contexts */);
+    
+        List<Statement> buffer = new ArrayList<>();
+        final int bufferSize = 1000000; // Dimensione del buffer, regolabile
+        int fileCounter = 0; // Contatore per i nomi dei file
+    
+        try {
+            while (itr.hasNext()) {
+                buffer.add(itr.next());
+    
+                if (buffer.size() >= bufferSize) {
+                    writeToFile(buffer, fileCounter++); // Scrivi il buffer nel file
+                    buffer.clear(); // Pulisci il buffer
                 }
-//            } finally {
-//                conn.close();
-//            }
-//        } finally {
-//            sail.shutDown();
-//        }
-
+            }
+    
+            if (!buffer.isEmpty()) {
+                writeToFile(buffer, fileCounter); // Scrivi l'ultimo batch se non vuoto
+            }
+        } finally {
+            itr.close();
+        }
     }
-
+    
+    private void writeToFile(List<Statement> buffer, int fileCounter) {
+        File file = new File(kbdir, "data_" + fileCounter + "." + format.getDefaultFileExtension() + ".gz");
+        System.out.println("Writing " + file);
+    
+        try (OutputStream os = new GZIPOutputStream(new FileOutputStream(file))) {
+            RDFWriter writer = RDFWriterRegistry.getInstance().get(format).getWriter(os);
+            writer.startRDF();
+            for (Statement stmt : buffer) {
+                writer.handleStatement(stmt);
+            }
+            writer.endRDF();
+        } catch (IOException e) {
+            // Gestione delle eccezioni di I/O
+            System.err.println("I/O error while writing the file: " + file.getName());
+            e.printStackTrace();
+        } catch (RDFHandlerException e) {
+            // Gestione delle eccezioni di RDF handling
+            System.err.println("Error handling RDF data for file: " + file.getName());
+            e.printStackTrace();
+        }
+    }
+                
     /**
      * Return a list of the namespaces for the {@link AbstractTripleStore}s
      * registered against the bigdata instance.
